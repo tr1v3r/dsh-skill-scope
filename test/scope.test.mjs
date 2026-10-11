@@ -27,11 +27,12 @@ test("layer A defaults parse to an empty, non-filtering scope", () => {
 });
 
 /** Build the real filesystem wrapper against isolated, read-only fixtures. */
-function buildProvider(t, overrides = {}) {
+function buildProvider(t, overrides = {}, ctxOverrides = {}) {
 	let factory;
 	const ctx = {
 		get: () => undefined,
 		logger: { warn: (message) => assert.fail(message) },
+		...ctxOverrides,
 		skills: {
 			registerProvider: (fn) => {
 				factory = fn;
@@ -149,6 +150,76 @@ for (const complete of [true, false]) {
 		});
 	});
 }
+
+test("Config keeps an explicit debug flag and leaves it unset by default", () => {
+	assert.equal(layerA.Config({ debug: true }).debug, true);
+	assert.equal(layerA.Config({}).debug, undefined);
+});
+
+test("list() warns about each hidden skill when debug is on", async (t) => {
+	const warns = [];
+	const provider = buildProvider(
+		t,
+		{ allowSkills: ["alpha"], debug: true },
+		{ logger: { warn: (message) => warns.push(message) } },
+	);
+	const { candidates } = await provider.list({});
+	assert.deepEqual(candidates.map((entry) => entry.name), ["alpha"]);
+	assert.deepEqual(
+		warns.map((message) => (message.match(/hiding "([^"]+)"/) ?? [])[1]),
+		["beta", "gamma"],
+	);
+});
+
+test("list() stays silent about hidden skills when debug is off", async (t) => {
+	const warns = [];
+	const provider = buildProvider(
+		t,
+		{ allowSkills: ["alpha"] },
+		{ logger: { warn: (message) => warns.push(message) } },
+	);
+	const { candidates } = await provider.list({});
+	assert.deepEqual(candidates.map((entry) => entry.name), ["alpha"]);
+	assert.deepEqual(warns, []);
+});
+
+test("observeHostMutation and dispose forward to the inner provider", async (t) => {
+	const observeMock = t.mock.method(
+		FileSystemSkillProvider.prototype,
+		"observeHostMutation",
+		() => "observed",
+	);
+	const disposeMock = t.mock.method(
+		FileSystemSkillProvider.prototype,
+		"dispose",
+		async () => "disposed",
+	);
+	const provider = buildProvider(t);
+	assert.equal(provider.observeHostMutation("/some/skill.md"), "observed");
+	assert.deepEqual(observeMock.mock.calls[0].arguments, ["/some/skill.md"]);
+	assert.equal(await provider.dispose(), "disposed");
+	assert.equal(disposeMock.mock.calls.length, 1);
+});
+
+test("list() drops bare candidates that carry no skill name", async (t) => {
+	const { candidates } = await buildProvider(t).list({});
+	t.mock.method(FileSystemSkillProvider.prototype, "list", async () => ({
+		candidates: [...candidates, { path: "/bare/SKILL.md" }],
+		complete: true,
+	}));
+	const provider = buildProvider(t, { allowSkills: ["alpha", "beta", "gamma"] });
+	const observation = await provider.list({});
+	assert.equal(observation.complete, true);
+	assert.deepEqual(observation.candidates.map((entry) => entry.name), ["alpha", "beta", "gamma"]);
+});
+
+test("get() rejects a bare candidate as out of scope", async (t) => {
+	const provider = buildProvider(t);
+	await assert.rejects(
+		provider.get({ path: "/bare/SKILL.md" }, {}),
+		/out of scope for provider "skill-scope"/,
+	);
+});
 
 // ---------------------------------------------------------------------------
 // Layer B — scoped worker dispatch (service contract only; composition-level

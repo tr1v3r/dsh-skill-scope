@@ -31,8 +31,6 @@ export const inject = ["agents", "skills"];
 export const Config = z.object({
 	/** Mount a `spawn_scoped_worker` tool for the model (default: service only). */
 	exposeTool: z.boolean().default(false),
-	/** Default model route for spawned workers, e.g. { provider, model }. */
-	defaultRoute: z.object({}).default({}),
 });
 
 function defineService(ctx, config) {

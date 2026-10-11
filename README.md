@@ -55,7 +55,7 @@ dsh plugin --profile <profile> add @tr1v3r/dsh-skill-scope
 ## 路线图
 
 - [ ] Layer A：组合级实测（挂进自定义 preset 验证目录投影与 invalidate 传播）
-- [ ] Layer A：watcher 失效透传的针对性测试
+- [x] Layer A：watcher 失效透传的针对性测试（`test/watch.test.mjs`：真实 chokidar watcher 验证 invalidate 传播与目录刷新）
 - [ ] Layer B：`agents.create` setup 契约实测；`whenIdle` 回收与错误传播
 - [ ] Layer B：`exposeTool` —— 给编排 agent 注册 `spawn_scoped_worker` 模型工具
 - [ ] 文档：三评制 gate 与输出契约的编排配方
