@@ -87,7 +87,9 @@ export function apply(ctx, config = {}) {
 			name: outerName,
 			/** The inner provider name is reserved for the wrapper's own registration. */
 			async list(options) {
-				const observation = await inner.list(options);
+				const result = await inner.list(options);
+				// Successful discovery returns an array; incomplete discovery returns an observation.
+				const observation = Array.isArray(result) ? { candidates: result, complete: true } : result;
 				const candidates = observation.candidates.filter((candidate) => {
 					const visible = inScope(skillNameOf(candidate));
 					if (!visible && config.debug === true) {

@@ -1,7 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { fileURLToPath } from "node:url";
+import { FileSystemSkillProvider } from "@deepseek-ai/dsh-skill-filesystem";
 import * as layerA from "../src/index.js";
 import * as layerB from "../src/worker.js";
+
+const fixtureSkillDir = fileURLToPath(new URL("./fixtures/skills/", import.meta.url));
 
 // ---------------------------------------------------------------------------
 // Layer A — scoped filesystem provider
@@ -22,10 +26,12 @@ test("layer A defaults parse to an empty, non-filtering scope", () => {
 	assert.equal(config.providerName, "skill-scope");
 });
 
-/** Build the wrapper provider with a stubbed ctx; no filesystem roots. */
-async function buildProvider(overrides = {}) {
+/** Build the real filesystem wrapper against isolated, read-only fixtures. */
+function buildProvider(t, overrides = {}) {
 	let factory;
 	const ctx = {
+		get: () => undefined,
+		logger: { warn: (message) => assert.fail(message) },
 		skills: {
 			registerProvider: (fn) => {
 				factory = fn;
@@ -34,46 +40,115 @@ async function buildProvider(overrides = {}) {
 	};
 	const config = layerA.Config({
 		includeDefaultRoots: false,
-		customSkillDirs: [],
+		customSkillDirs: [fixtureSkillDir],
 		watch: false,
 		...overrides,
 	});
 	layerA.apply(ctx, config);
 	assert.equal(typeof factory, "function", "apply must register a provider factory");
-	// The wrapped provider attaches an abort listener to control.signal.
-	return factory({ invalidate: () => {}, signal: new AbortController().signal });
+	const provider = factory({ invalidate: () => {}, signal: new AbortController().signal });
+	t.after(() => provider.dispose());
+	return provider;
 }
 
-test("get() rejects out-of-scope names when enforceOnGet is on", async () => {
-	const provider = await buildProvider({ allowSkills: ["visible-skill"] });
+/** Discover a valid locator without filtering, as another provider might do. */
+async function fixtureCandidate(t, name) {
+	const { candidates } = await buildProvider(t).list({});
+	const candidate = candidates.find((entry) => entry.name === name);
+	assert.ok(candidate, `fixture skill "${name}" must be discovered`);
+	return candidate;
+}
+
+test("get() rejects out-of-scope names when enforceOnGet is on", async (t) => {
+	const provider = buildProvider(t, { allowSkills: ["alpha"] });
+	const candidate = await fixtureCandidate(t, "beta");
 	await assert.rejects(
-		provider.get({ name: "hidden-skill" }),
+		provider.get(candidate, {}),
 		/out of scope for provider "skill-scope"/,
 	);
 });
 
-test("get() allows out-of-scope names when enforceOnGet is off", async () => {
-	const provider = await buildProvider({ allowSkills: [], enforceOnGet: false });
-	// No allowlist → nothing is out of scope; the call reaches the wrapped
-	// provider, which fails differently (no such skill) but not with our error.
-	await assert.rejects(provider.get({ name: "no-such-skill" }), (err) => {
-		assert.doesNotMatch(err.message, /out of scope/);
-		return true;
-	});
+test("get() loads an in-scope filesystem skill", async (t) => {
+	const provider = buildProvider(t, { allowSkills: ["alpha"] });
+	const { candidates } = await provider.list({});
+	assert.deepEqual(candidates.map((entry) => entry.name), ["alpha"]);
+	const definition = await provider.get(candidates[0], {});
+	assert.equal(definition.name, "alpha");
+	assert.equal(definition.content, "Alpha instructions.");
 });
 
-test("list() filters candidates through the allowlist and denylist", async () => {
-	const provider = await buildProvider({
+test("get() rejects a denied skill even when it is allowlisted", async (t) => {
+	const provider = buildProvider(t, {
 		allowSkills: ["alpha", "beta"],
 		denySkills: ["beta"],
 	});
-	const inner = provider;
-	// Monkey-patch is impossible (closure), so drive filtering via get():
-	// denylist wins over allowlist.
-	await assert.rejects(provider.get({ name: "beta" }), /out of scope/);
-	await assert.rejects(provider.get({ name: "gamma" }), /out of scope/);
-	assert.equal(typeof inner.list, "function");
+	const candidate = await fixtureCandidate(t, "beta");
+	await assert.rejects(provider.get(candidate, {}), /out of scope/);
 });
+
+test("get() loads an out-of-scope skill when enforceOnGet is off", async (t) => {
+	const provider = buildProvider(t, {
+		allowSkills: ["alpha"],
+		enforceOnGet: false,
+	});
+	const candidate = await fixtureCandidate(t, "beta");
+	const definition = await provider.get(candidate, {});
+	assert.equal(definition.name, "beta");
+	assert.equal(definition.content, "Beta instructions.");
+	// Disabling load enforcement must not disable discovery filtering.
+	const { candidates } = await provider.list({});
+	assert.deepEqual(candidates.map((entry) => entry.name), ["alpha"]);
+});
+
+for (const { title, config, expected } of [
+	{
+		title: "list() exposes all candidates when both scope lists are empty",
+		config: {},
+		expected: ["alpha", "beta", "gamma"],
+	},
+	{
+		title: "list() exposes only allowlisted candidates",
+		config: { allowSkills: ["alpha", "beta"] },
+		expected: ["alpha", "beta"],
+	},
+	{
+		title: "list() gives the denylist precedence over the allowlist",
+		config: { allowSkills: ["alpha", "beta"], denySkills: ["beta"] },
+		expected: ["alpha"],
+	},
+	{
+		title: "list() applies the denylist even when the allowlist is empty",
+		config: { denySkills: ["beta"] },
+		expected: ["alpha", "gamma"],
+	},
+	{
+		title: "list() returns no candidates when no skills match the allowlist",
+		config: { allowSkills: ["missing-skill"] },
+		expected: [],
+	},
+]) {
+	test(title, async (t) => {
+		const provider = buildProvider(t, config);
+		const observation = await provider.list({});
+		assert.equal(observation.complete, true);
+		assert.deepEqual(observation.candidates.map((entry) => entry.name), expected);
+	});
+}
+
+for (const complete of [true, false]) {
+	test(`list() filters structured observations and preserves complete=${complete}`, async (t) => {
+		const { candidates } = await buildProvider(t).list({});
+		t.mock.method(FileSystemSkillProvider.prototype, "list", async () => ({ candidates, complete }));
+		const provider = buildProvider(t, {
+			allowSkills: ["alpha", "beta"],
+			denySkills: ["beta"],
+		});
+		assert.deepEqual(await provider.list({}), {
+			candidates: [candidates.find((entry) => entry.name === "alpha")],
+			complete,
+		});
+	});
+}
 
 // ---------------------------------------------------------------------------
 // Layer B — scoped worker dispatch (service contract only; composition-level
