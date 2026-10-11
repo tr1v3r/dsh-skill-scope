@@ -1,0 +1,53 @@
+{
+  "name": "@tr1v3r/dsh-skill-scope",
+  "version": "0.1.0",
+  "description": "Physically scoped skill visibility for DeepSeek Harness agents: an allowlist/denylist filtering filesystem skill provider (Layer A) plus a scoped worker dispatch service (Layer B, experimental).",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "skill",
+    "scope",
+    "agent"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "test": "node --check src/index.js && node --check src/worker.js && node --test \"test/*.test.mjs\""
+  },
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./worker": "./src/worker.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "engines": {
+      "dsh": ">=0.2.0-rc.1"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": "^3.18.4",
+    "@deepseek-ai/dsh-skill-filesystem": "^0.2.0-rc.1"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tr1v3r/dsh-skill-scope.git"
+  },
+  "homepage": "https://github.com/tr1v3r/dsh-skill-scope#readme",
+  "bugs": {
+    "url": "https://github.com/tr1v3r/dsh-skill-scope/issues"
+  },
+  "author": "tr1v3r <tr1v3r@outlook.com> (https://github.com/tr1v3r)"
+}
